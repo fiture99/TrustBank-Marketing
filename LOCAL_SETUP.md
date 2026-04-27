@@ -34,19 +34,19 @@ cd path/to/trust-bank-project
 Create a fresh database for the app:
 
 ```bash
-createdb trustbank
+createdb trustbank-marketing
 ```
 
 If `createdb` isn't available, use `psql`:
 
 ```bash
-psql -U postgres -c "CREATE DATABASE trustbank;"
+psql -U postgres -c 'CREATE DATABASE "trustbank-marketing";'
 ```
 
 (Optional Docker alternative — runs Postgres on port 5432 with no install:)
 
 ```bash
-docker run --name trustbank-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=trustbank -p 5432:5432 -d postgres:16
+docker run --name trustbank-marketing-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=trustbank-marketing -p 5432:5432 -d postgres:16
 ```
 
 ## 4. Configure environment variables
@@ -57,7 +57,7 @@ Two `.env` files are needed.
 
 ```bash
 cat > lib/db/.env <<'EOF'
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/trustbank
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/trustbank-marketing
 EOF
 ```
 
@@ -70,7 +70,7 @@ cp artifacts/api-server/.env.example artifacts/api-server/.env
 Then open `artifacts/api-server/.env` in your editor and add:
 
 ```env
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/trustbank
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/trustbank-marketing
 SESSION_SECRET=any-long-random-string-you-like
 
 # DataSling SMS (use the values from your API docs)
@@ -98,14 +98,14 @@ This installs everything for every package in the monorepo. First run takes a co
 # Push the Drizzle schema to your database (creates all tables)
 pnpm --filter @workspace/db run push
 
-# Build and seed the demo dataset (campaigns, leads, deals, notifications…)
-cd artifacts/api-server
-pnpm exec esbuild src/seed.ts --bundle --platform=node --format=esm --outfile=dist/seed.mjs --packages=external
-node --env-file=.env dist/seed.mjs
-cd ../..
+# Seed the demo dataset (campaigns, leads, deals, notifications…)
+pnpm --filter @workspace/api-server run seed
 ```
 
 You should see "Seeded …" output with row counts.
+
+> The seed script reads `DATABASE_URL` from `artifacts/api-server/.env` automatically.
+> The schema push reads it from `lib/db/.env` automatically.
 
 ## 7. Run the app
 
@@ -113,14 +113,26 @@ You need **two terminals** open in the project root.
 
 **Terminal 1 — API server (port 8080):**
 
+macOS / Linux:
 ```bash
 PORT=8080 pnpm --filter @workspace/api-server run dev
 ```
 
+Windows (PowerShell):
+```powershell
+$env:PORT=8080; pnpm --filter @workspace/api-server run dev
+```
+
 **Terminal 2 — Web frontend (port 5173):**
 
+macOS / Linux:
 ```bash
 PORT=5173 BASE_PATH=/ pnpm --filter @workspace/trust-bank run dev
+```
+
+Windows (PowerShell):
+```powershell
+$env:PORT=5173; $env:BASE_PATH="/"; pnpm --filter @workspace/trust-bank run dev
 ```
 
 Now open http://localhost:5173 in your browser. The web app will proxy `/api/*` requests to the API server automatically (configured in `artifacts/trust-bank/vite.config.ts`).
@@ -148,7 +160,7 @@ For real production, put nginx (or any reverse proxy) in front and route `/api/*
 
 | Symptom                                                  | Fix                                                                                              |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Error: connect ECONNREFUSED 127.0.0.1:5432`             | Postgres isn't running. Start it (`brew services start postgresql`, `sudo service postgresql start`, or `docker start trustbank-pg`). |
+| `Error: connect ECONNREFUSED 127.0.0.1:5432`             | Postgres isn't running. Start it (`brew services start postgresql`, `sudo service postgresql start`, or `docker start trustbank-marketing-pg`). |
 | `DATABASE_URL is not set`                                | The `.env` file isn't being read. Make sure it lives at `artifacts/api-server/.env` (not in the project root) and that you ran step 4. |
 | API returns 500 / Zod errors                             | Schema is out of date. Re-run `pnpm --filter @workspace/db run push`.                             |
 | SMS returns "SMS provider is not configured"             | Add the four `DATASLING_SMS_*` values to `artifacts/api-server/.env` and restart the API server.  |
@@ -170,5 +182,5 @@ PORT=5173 BASE_PATH=/ pnpm --filter @workspace/trust-bank run dev
 To re-seed (wipes existing demo data):
 
 ```bash
-cd artifacts/api-server && node --env-file=.env dist/seed.mjs
+pnpm --filter @workspace/api-server run seed
 ```
