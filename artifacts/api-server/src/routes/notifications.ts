@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, sql, desc } from "drizzle-orm";
+import { and, eq, desc, isNotNull, inArray } from "drizzle-orm";
 import {
   db,
   notificationsTable,
@@ -7,6 +7,7 @@ import {
   notificationTemplatesTable,
   usersTable,
   campaignsTable,
+  leadsTable,
 } from "@workspace/db";
 import {
   ListNotificationsQueryParams,
@@ -18,6 +19,8 @@ import {
   ListNotificationTemplatesResponse,
 } from "@workspace/api-zod";
 import { getCurrentUserId } from "../lib/currentUser";
+import { sendBulkSms, isSmsConfigured } from "../lib/sms";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -81,42 +84,83 @@ router.post("/notifications/send", async (req, res): Promise<void> => {
     return;
   }
   const sentById = await getCurrentUserId();
-  const recipientCount =
-    parsed.data.audience === "custom"
-      ? parsed.data.recipients?.length ?? 0
-      : audienceCounts[parsed.data.audience] ?? 0;
+
+  // Resolve recipient list (phone numbers / emails) per channel + audience.
+  const phoneNumbers = await resolveRecipients(parsed.data);
+
+  let deliveredCount = 0;
+  let failedCount = 0;
+  let status: "sent" | "partial" | "failed" = "sent";
+  let providerNote = "";
+
+  if (parsed.data.channel === "sms") {
+    if (!isSmsConfigured()) {
+      res.status(503).json({
+        error:
+          "SMS provider is not configured. Add DATASLING_SMS_USERNAME, DATASLING_SMS_PASSWORD, DATASLING_SMS_BEARER_TOKEN and DATASLING_SMS_SENDER to artifacts/api-server/.env then restart the API.",
+      });
+      return;
+    }
+    if (phoneNumbers.length === 0) {
+      res.status(400).json({
+        error:
+          "No recipients to send to. For SMS, pick the 'custom' audience and provide phone numbers, or use 'staff' / a customer audience to target leads with phones on file.",
+      });
+      return;
+    }
+
+    const results = await sendBulkSms(phoneNumbers, parsed.data.message);
+    deliveredCount = results.filter((r) => r.success).length;
+    failedCount = results.length - deliveredCount;
+    if (failedCount === 0) status = "sent";
+    else if (deliveredCount === 0) status = "failed";
+    else status = "partial";
+
+    const firstError = results.find((r) => !r.success);
+    if (firstError) {
+      providerNote = ` · ${failedCount} failed (${firstError.errorMessage ?? firstError.errorCode ?? "unknown"})`;
+    }
+    logger.info(
+      { deliveredCount, failedCount, attempted: results.length },
+      "SMS bulk send complete",
+    );
+  } else {
+    // email and in_app remain logged-only for now
+    deliveredCount =
+      parsed.data.audience === "custom"
+        ? parsed.data.recipients?.length ?? 0
+        : audienceCounts[parsed.data.audience] ?? 0;
+  }
+
   const recipientLabel =
     parsed.data.audience === "custom"
-      ? (parsed.data.recipients ?? []).slice(0, 3).join(", ") || "Custom list"
+      ? `${phoneNumbers.length} custom recipients`
       : audienceLabel(parsed.data.audience);
 
   const [created] = await db
     .insert(notificationsTable)
     .values({
       channel: parsed.data.channel,
-      recipient: recipientLabel,
+      recipient: recipientLabel + providerNote,
       subject: parsed.data.subject ?? null,
       message: parsed.data.message,
-      status: "sent",
-      recipientCount,
+      status,
+      recipientCount: deliveredCount,
       sentById,
       campaignId: parsed.data.campaignId ?? null,
     })
     .returning();
 
-  // For in_app, also write inbox alerts for staff (just the current user as a demo)
+  // For in_app, also write inbox alerts for staff
   if (parsed.data.channel === "in_app") {
     const staff = await db.select().from(usersTable);
-    if (parsed.data.audience === "staff" || parsed.data.audience === "custom") {
-      const targets = parsed.data.audience === "custom" ? staff : staff;
-      for (const u of targets) {
-        await db.insert(inboxAlertsTable).values({
-          userId: u.id,
-          title: parsed.data.subject ?? "Team announcement",
-          body: parsed.data.message,
-          category: "system",
-        });
-      }
+    for (const u of staff) {
+      await db.insert(inboxAlertsTable).values({
+        userId: u.id,
+        title: parsed.data.subject ?? "Team announcement",
+        body: parsed.data.message,
+        category: "system",
+      });
     }
   }
 
@@ -147,9 +191,50 @@ router.post("/notifications/send", async (req, res): Promise<void> => {
       sentByName: withMeta.sentByName ?? "—",
       createdAt: withMeta.createdAt.toISOString(),
     },
-    deliveredCount: recipientCount,
+    deliveredCount,
+    failedCount,
   });
 });
+
+async function resolveRecipients(data: {
+  channel: "sms" | "email" | "in_app";
+  audience: string;
+  recipients?: string[];
+}): Promise<string[]> {
+  if (data.audience === "custom") {
+    return (data.recipients ?? []).map((r) => r.trim()).filter(Boolean);
+  }
+
+  if (data.channel === "sms") {
+    if (data.audience === "staff") {
+      // No phone column on users yet — staff broadcasts must go via custom recipients.
+      return [];
+    }
+    // For any customer audience, target leads with a phone on file.
+    const stages = audienceLeadStages(data.audience);
+    const rows = await db
+      .select({ phone: leadsTable.phone })
+      .from(leadsTable)
+      .where(stages.length ? inArray(leadsTable.stage, stages) : isNotNull(leadsTable.phone));
+    return rows.map((r) => r.phone).filter((p): p is string => Boolean(p));
+  }
+
+  return [];
+}
+
+function audienceLeadStages(audience: string): Array<"new" | "contacted" | "qualified" | "converted" | "lost"> {
+  switch (audience) {
+    case "account_holders":
+      return ["converted"];
+    case "loan_clients":
+      return ["converted", "qualified"];
+    case "business_customers":
+      return ["qualified", "converted"];
+    case "all_customers":
+    default:
+      return [];
+  }
+}
 
 function audienceLabel(audience: string): string {
   switch (audience) {
@@ -214,6 +299,14 @@ router.post("/notifications/inbox/:id/read", async (req, res): Promise<void> => 
       createdAt: updated.createdAt.toISOString(),
     }),
   );
+});
+
+router.get("/notifications/provider-status", async (_req, res): Promise<void> => {
+  res.json({
+    sms: { configured: isSmsConfigured(), provider: "DataSling Bulk SMS" },
+    email: { configured: false, provider: "Outlook (pending setup)" },
+    in_app: { configured: true, provider: "Trust Bank inbox" },
+  });
 });
 
 router.get("/notifications/templates", async (_req, res): Promise<void> => {
