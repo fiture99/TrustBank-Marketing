@@ -1,0 +1,40 @@
+PS C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing> # Push the Drizzle schema to your database (creates all tables)
+>> pnpm --filter @workspace/db run push
+>> 
+>> # Build and seed the demo dataset (campaigns, leads, deals, notifications…)
+>> cd artifacts/api-server
+>> pnpm exec esbuild src/seed.ts --bundle --platform=node --format=esm --outfile=dist/seed.mjs --packages=external
+>> node --env-file=.env dist/seed.mjs
+>> cd ../..
+
+> @workspace/db@0.0.0 push C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing\lib\db
+> drizzle-kit push --config ./drizzle.config.ts
+
+Reading config file 'C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing\lib\db\drizzle.config.ts'
+DATABASE_URL, ensure the database is provisioned
+C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing\lib\db:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/db@0.0.0 push: `drizzle-kit push --config ./drizzle.config.ts`
+Exit status 1
+
+  dist\seed.mjs  21.4kb
+
+Done in 13ms
+node:internal/modules/esm/resolve:262
+    throw new ERR_UNSUPPORTED_DIR_IMPORT(path, basePath, String(resolved));
+          ^
+
+Error [ERR_UNSUPPORTED_DIR_IMPORT]: Directory import 'C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing\lib\db\src\schema' is not supported resolving ES modules imported from C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing\lib\db\src\index.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:262:11)
+    at moduleResolve (node:internal/modules/esm/resolve:859:10)
+    at defaultResolve (node:internal/modules/esm/resolve:983:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:783:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:707:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:690:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:307:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:183:49) {
+  code: 'ERR_UNSUPPORTED_DIR_IMPORT',
+  url: 'file:///C:/Users/Gainde/Documents/GitHub/TrustBank-Marketing/lib/db/src/schema'
+}
+
+Node.js v22.18.0
+PS C:\Users\Gainde\Documents\GitHub\TrustBank-Marketing> 

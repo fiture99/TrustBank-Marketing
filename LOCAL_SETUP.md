@@ -98,14 +98,14 @@ This installs everything for every package in the monorepo. First run takes a co
 # Push the Drizzle schema to your database (creates all tables)
 pnpm --filter @workspace/db run push
 
-# Build and seed the demo dataset (campaigns, leads, deals, notifications…)
-cd artifacts/api-server
-pnpm exec esbuild src/seed.ts --bundle --platform=node --format=esm --outfile=dist/seed.mjs --packages=external
-node --env-file=.env dist/seed.mjs
-cd ../..
+# Seed the demo dataset (campaigns, leads, deals, notifications…)
+pnpm --filter @workspace/api-server run seed
 ```
 
 You should see "Seeded …" output with row counts.
+
+> The seed script reads `DATABASE_URL` from `artifacts/api-server/.env` automatically.
+> The schema push reads it from `lib/db/.env` automatically.
 
 ## 7. Run the app
 
@@ -113,14 +113,26 @@ You need **two terminals** open in the project root.
 
 **Terminal 1 — API server (port 8080):**
 
+macOS / Linux:
 ```bash
 PORT=8080 pnpm --filter @workspace/api-server run dev
 ```
 
+Windows (PowerShell):
+```powershell
+$env:PORT=8080; pnpm --filter @workspace/api-server run dev
+```
+
 **Terminal 2 — Web frontend (port 5173):**
 
+macOS / Linux:
 ```bash
 PORT=5173 BASE_PATH=/ pnpm --filter @workspace/trust-bank run dev
+```
+
+Windows (PowerShell):
+```powershell
+$env:PORT=5173; $env:BASE_PATH="/"; pnpm --filter @workspace/trust-bank run dev
 ```
 
 Now open http://localhost:5173 in your browser. The web app will proxy `/api/*` requests to the API server automatically (configured in `artifacts/trust-bank/vite.config.ts`).
@@ -170,5 +182,5 @@ PORT=5173 BASE_PATH=/ pnpm --filter @workspace/trust-bank run dev
 To re-seed (wipes existing demo data):
 
 ```bash
-cd artifacts/api-server && node --env-file=.env dist/seed.mjs
+pnpm --filter @workspace/api-server run seed
 ```
