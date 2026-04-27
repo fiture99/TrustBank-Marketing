@@ -66,6 +66,18 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // When running locally (outside Replit), proxy /api to the API server.
+    // In Replit, the platform's path-based proxy handles this routing,
+    // so /api requests never reach Vite.
+    proxy:
+      process.env.REPL_ID === undefined
+        ? {
+            "/api": {
+              target: process.env.API_URL ?? "http://localhost:8080",
+              changeOrigin: true,
+            },
+          }
+        : undefined,
   },
   preview: {
     port,
